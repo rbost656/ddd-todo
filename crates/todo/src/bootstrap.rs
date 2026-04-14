@@ -36,6 +36,7 @@ pub fn bootstrap() -> TodoFacade {
         outbox,
         inbox,
         projection_store.clone(),
+        3,
     ));
     let service = TodoService::new(repo, uow, projection_store);
     let projection_service = TodoProjectionService::new(relay);

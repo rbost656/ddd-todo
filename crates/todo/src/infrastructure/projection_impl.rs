@@ -4,10 +4,9 @@ use async_trait::async_trait;
 
 use crate::{
     DomainError,
-    application::{TodoProjectionStore, TodoView},
+    application::{TodoEventRecord, TodoProjectionStore, TodoView},
     domain::{
         events::TodoEvent,
-        outbox::TodoEventRecord,
     },
 };
 

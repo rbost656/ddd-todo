@@ -35,6 +35,16 @@ impl Todo {
         }
     }
 
+    pub fn rehydrate(id: TodoId, title: TodoTitle, completed: bool, version: u64) -> Self {
+        Self {
+            id,
+            title,
+            completed,
+            version,
+            pending_events: Vec::new(),
+        }
+    }
+
     pub fn complete(&mut self) -> Result<(), AppError> {
         if self.completed {
             return Err(AppError::Conflict {

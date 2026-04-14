@@ -1,6 +1,6 @@
 pub mod application;
 pub mod bootstrap;
-pub(crate) mod domain;
+pub mod domain;
 pub mod facade;
 pub mod infrastructure;
 

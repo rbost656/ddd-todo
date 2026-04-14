@@ -7,11 +7,10 @@ use async_trait::async_trait;
 
 use crate::{
     AppError,
+    application::{TodoEventRecord, TodoUnitOfWork, TodoUnitOfWorkManager},
     domain::{
         aggregate::Todo,
-        outbox::TodoEventRecord,
         repo::TodoRepository,
-        uow::{TodoUnitOfWork, TodoUnitOfWorkManager},
         value_objects::TodoId,
     },
 };
@@ -37,14 +36,13 @@ where
 {
     async fn save(&self, mut todo: Todo) -> Result<(), AppError> {
         let uow = self.uow_manager.current()?;
-        let records = todo
-            .pull_events()
-            .into_iter()
-            .map(TodoEventRecord::new)
-            .collect::<Vec<_>>();
+        let uow_id = uow.id().to_string();
+        let events = todo.pull_events();
 
         uow.stage_todo(todo).await?;
-        for record in records {
+        for event in events {
+            let event_order = uow.next_event_order().await?;
+            let record = TodoEventRecord::new(event, uow_id.clone(), event_order);
             uow.add_event(record).await?;
         }
         Ok(())

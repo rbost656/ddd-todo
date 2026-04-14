@@ -3,8 +3,6 @@ pub(crate) mod builders;
 pub mod errors;
 pub(crate) mod events;
 pub mod model;
-pub mod outbox;
 pub(crate) mod repo;
 pub(crate) mod service;
-pub mod uow;
 pub(crate) mod value_objects;

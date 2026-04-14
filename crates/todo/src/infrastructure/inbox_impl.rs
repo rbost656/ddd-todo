@@ -4,7 +4,7 @@ use async_trait::async_trait;
 
 use crate::{
     DomainError,
-    domain::outbox::TodoEventInbox,
+    application::TodoEventInbox,
 };
 
 #[derive(Default)]

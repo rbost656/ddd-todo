@@ -3,12 +3,12 @@ use crate::{
         dto::{CompleteTodo, CreateTodo, GetTodo, ListTodos, TodoView},
         handler::{CommandHandler, QueryHandler},
         projection::TodoProjectionStore,
+        TodoUnitOfWorkManager,
     },
     domain::{
         builders::TodoBuilder,
         model::Builder,
         repo::TodoRepository,
-        uow::TodoUnitOfWorkManager,
         value_objects::TodoId,
     },
     DomainError,
@@ -154,15 +154,21 @@ mod tests {
         DomainError,
         domain::{
             aggregate::Todo,
-            outbox::{TodoEventInbox, TodoEventOutbox},
+            builders::TodoBuilder,
+            model::Builder,
+            repo::TodoRepository,
             value_objects::TodoId,
         },
+        application::{TodoEventInbox, TodoEventOutbox, TodoUnitOfWork, TodoUnitOfWorkManager},
     };
     use crate::infrastructure::{
         InMemoryTodoEventInbox, InMemoryTodoEventOutbox, InMemoryTodoOutboxRelay,
         InMemoryTodoProjectionStore, InMemoryTodoRepository, InMemoryTodoUnitOfWorkManager,
     };
-    use std::{collections::HashMap, sync::{Arc, RwLock}};
+    use std::{
+        collections::HashMap,
+        sync::{Arc, Mutex, RwLock},
+    };
 
     #[tokio::test]
     async fn todo_service_implements_cqrs_handlers_directly() {
@@ -189,6 +195,7 @@ mod tests {
             outbox.clone(),
             inbox.clone(),
             projection_store.clone(),
+            3,
         ));
         let service = TodoService::new(repo, uow, projection_store.clone());
         let projection_service = TodoProjectionService::new(relay);
@@ -236,6 +243,11 @@ mod tests {
 
         let pending = outbox.pending().await.expect("pending outbox records");
         assert!(pending.is_empty());
+        let records = outbox.records().expect("all outbox records");
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].event_order, 1);
+        assert_eq!(records[1].event_order, 1);
+        assert_ne!(records[0].uow_id, records[1].uow_id);
         assert!(inbox
             .contains("todo-1:1:todo.created")
             .await
@@ -244,5 +256,105 @@ mod tests {
             .contains("todo-1:2:todo.completed")
             .await
             .expect("inbox complete"));
+    }
+
+    #[tokio::test]
+    async fn unit_of_work_tracks_hooks_and_event_order() {
+        let store = Arc::new(RwLock::new(HashMap::<TodoId, Todo>::new()));
+        let outbox = Arc::new(InMemoryTodoEventOutbox::default());
+        let persist_store = store.clone();
+        let uow = Arc::new(InMemoryTodoUnitOfWorkManager::new(
+            Arc::new(move |todo| {
+                let persist_store = persist_store.clone();
+                Box::pin(async move {
+                    let mut todos = persist_store.write().map_err(|_| DomainError::Persistence {
+                        message: "todo persistent store write lock poisoned".to_string(),
+                    })?;
+                    todos.insert(todo.id().clone(), todo);
+                    Ok(())
+                })
+            }),
+            outbox.clone(),
+        ));
+        let repo = Arc::new(InMemoryTodoRepository::new(uow.clone(), store));
+        let builder = TodoBuilder;
+        let completed = Arc::new(Mutex::new(Vec::new()));
+        let failed = Arc::new(Mutex::new(Vec::new()));
+
+        let uow_for_commit = uow.clone();
+        uow.begin(|| {
+            let repo = repo.clone();
+            let completed = completed.clone();
+            let uow = uow_for_commit.clone();
+            async move {
+                let current = uow.current().expect("active uow");
+                current
+                    .on_completed(Arc::new(move |event| {
+                        let completed = completed.clone();
+                        Box::pin(async move {
+                            completed.lock().expect("completed hooks").push(event);
+                            Ok(())
+                        })
+                    }))
+                    .await?;
+
+                let todo_1 = builder.build(CreateTodo {
+                    id: "todo-1".to_string(),
+                    title: "first".to_string(),
+                })?;
+                let todo_2 = builder.build(CreateTodo {
+                    id: "todo-2".to_string(),
+                    title: "second".to_string(),
+                })?;
+
+                repo.save(todo_1).await?;
+                repo.save(todo_2).await?;
+                Ok(())
+            }
+        })
+        .await
+        .expect("uow committed");
+
+        let records = outbox.records().expect("all outbox records");
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].uow_id, records[1].uow_id);
+        assert_eq!(records[0].event_order, 1);
+        assert_eq!(records[1].event_order, 2);
+
+        let completed_events = completed.lock().expect("completed results");
+        assert_eq!(completed_events.len(), 1);
+        assert_eq!(completed_events[0].uow_id, records[0].uow_id);
+        assert_eq!(completed_events[0].persisted_todos, 2);
+        assert_eq!(completed_events[0].persisted_event_ids.len(), 2);
+        drop(completed_events);
+
+        let uow_for_failure = uow.clone();
+        let result: Result<(), DomainError> = uow
+            .begin(|| {
+                let failed = failed.clone();
+                let uow = uow_for_failure.clone();
+                async move {
+                    let current = uow.current().expect("active uow");
+                    current
+                        .on_failed(Arc::new(move |event| {
+                            let failed = failed.clone();
+                            Box::pin(async move {
+                                failed.lock().expect("failed hooks").push(event);
+                                Ok(())
+                            })
+                        }))
+                        .await?;
+
+                    Err(DomainError::Validation {
+                        message: "boom".to_string(),
+                    })
+                }
+            })
+            .await;
+
+        assert!(matches!(result, Err(DomainError::Validation { .. })));
+        let failed_events = failed.lock().expect("failed results");
+        assert_eq!(failed_events.len(), 1);
+        assert_eq!(failed_events[0].reason, "validation error: boom");
     }
 }
