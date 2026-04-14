@@ -4,7 +4,12 @@ pub mod outbox;
 pub mod projection;
 pub mod service;
 pub mod uow;
+pub mod context;
 
+pub use context::{
+    ActorContext, ExecutionContext, RequestContext, RequestMeta, RequestSource, TenancyContext,
+    TraceContext,
+};
 pub use dto::{CompleteTodo, CreateTodo, GetTodo, ListTodos, TodoView};
 pub use handler::{CommandHandler, QueryHandler};
 pub use outbox::{EventStatus, TodoEventInbox, TodoEventOutbox, TodoEventRecord};
