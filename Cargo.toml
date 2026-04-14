@@ -1,0 +1,21 @@
+[workspace]
+members = ["crates/*"]
+resolver = "3"
+default-members = ["crates/todo"]
+
+[workspace.package]
+edition = "2024"
+version = "1.0.0"
+[workspace.dependencies]
+snafu = { version = "0.9.0" }
+tokio = { version = "*", features = ["full"] }
+sea-orm = { version = "1.1.20", features = [
+  "sqlx-postgres",
+  "sqlx-sqlite",
+  "runtime-tokio-rustls",
+] }
+
+async-trait = "*"
+tracing = { version = "*" }
+tracing-subscriber = { version = "*", features = [] }
+# default bin
